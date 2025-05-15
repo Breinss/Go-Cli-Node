@@ -3,10 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
-
 	"github.com/Breinss/Go-Cli-Node/internal/app"
 )
-import "github.com/charmbracelet/log"
 
 func main() {
 	app := app.New()
