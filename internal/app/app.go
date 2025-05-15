@@ -4,11 +4,9 @@ import (
     "flag"
     "fmt"
     "os"
-    "time"
 
+    "github.com/Breinss/Go-Cli-Node/internal/scanner"
     "github.com/charmbracelet/lipgloss"
-    "github.com/Breinss/Go-Cli-Node/pkg/helpers/scanner"
-	"github.com/charmbracelet/huh/spinner"
 )
 
 var (
@@ -35,6 +33,7 @@ func New() *App {
 // Run executes the application logic
 func (a *App) Run() error {
     // Define command-line flags
+	
     scanCmd := flag.NewFlagSet("scan", flag.ExitOnError)
     rootPathPtr := scanCmd.String("path", "/", "Root path to scan for node_modules directories")
     
@@ -57,41 +56,27 @@ func (a *App) Run() error {
 
 // scanNodeModules scans for node_modules directories and displays the results
 func (a *App) scanNodeModules() error {
-    fmt.Printf("Scanning for node_modules directories from: %s\n", a.rootPath)
+    // Create a new scanner with the root path
+    nodeScanner := scanner.New(a.rootPath)
     
-    var results []scanner.NodeModulesInfo
-    var scanErr error
-    startTime := time.Now()
-    
-    // Define action function for the spinner
-    action := func() {
-        results, scanErr = helpers.ScanNodeModules(a.rootPath)
+    // Ask for confirmation before scanning
+    confirmed, err := nodeScanner.ConfirmScan()
+    if err != nil {
+        return err
     }
     
-    // Run the spinner with our scanning action
-    if err := spinner.New().
-        Title("Scanning for node_modules... This may take some time").
-        Action(action).
-        Run(); err != nil {
-        return fmt.Errorf("spinner error: %v", err)
+    if !confirmed {
+        fmt.Println("Scan operation cancelled by user.")
+        return nil
     }
     
-    // After spinner completes, check if scan had an error
-    if scanErr != nil {
-        return fmt.Errorf("error during scan: %v", scanErr)
+    // Perform the scan
+    if err := nodeScanner.Scan(); err != nil {
+        return err
     }
     
-    duration := time.Since(startTime)
-    
-    fmt.Printf("\nFound %d node_modules directories in %s\n\n", len(results), duration)
-    
-    // Calculate total size from results
-    var totalSize int64
-    for _, result := range results {
-        totalSize += result.Size
-    }
-    
-    fmt.Printf("\nTotal space used: %s\n", helpers.FormatSize(totalSize))
+    // Display the results
+    nodeScanner.DisplayResults()
     
     return nil
 }

@@ -26,3 +26,4 @@ go.work
 # Build artifacts
 bin/
 dist/
+app
