@@ -99,6 +99,30 @@ func (s *Scanner) DisplayResults() {
 	s.DisplaySizeDistribution()
 }
 
+// AskForPruning asks the user if they want to prune node_modules directories
+func (s *Scanner) AskForPruning() error {
+	if len(s.results) == 0 {
+		return nil
+	}
+
+	var wantToPrune bool
+	if err := huh.NewConfirm().
+		Title("Would you like to prune node_modules directories?").
+		Description(fmt.Sprintf("You can free up to %s of disk space", helpers.FormatSize(s.totalSize))).
+		Affirmative("Yes, let me select directories").
+		Negative("No, keep them all").
+		Value(&wantToPrune).
+		Run(); err != nil {
+		return fmt.Errorf("pruning confirmation error: %v", err)
+	}
+
+	if wantToPrune {
+		return s.PruneNodeModules()
+	}
+	
+	return nil
+}
+
 // DisplayLargestDirectories shows the largest directories as a tree
 func (s *Scanner) DisplayLargestDirectories(topCount int) {
 	if len(s.results) < topCount {
@@ -191,4 +215,98 @@ func (s *Scanner) DisplaySizeDistribution() {
 			rowStyle.Render(fmt.Sprintf("%d", r.count)),
 			rowStyle.Render(helpers.FormatSize(r.total)))
 	}
+}
+
+// PruneNodeModules allows user to select and delete node_modules directories
+func (s *Scanner) PruneNodeModules() error {
+	if len(s.results) == 0 {
+		return fmt.Errorf("no node_modules directories found to prune")
+	}
+
+	// Create options for selection form
+	options := make([]huh.Option[string], len(s.results))
+	for i, result := range s.results {
+		// Create a label with path and size
+		label := fmt.Sprintf("%s (%s)", result.Path, helpers.FormatSize(result.Size))
+		options[i] = huh.NewOption(label, result.Path)
+	}
+
+	// Create multi-select form for choosing directories to prune
+	var selectedPaths []string
+	form := huh.NewMultiSelect[string]().
+		Title("Select node_modules directories to prune").
+		Options(options...).
+		Value(&selectedPaths)
+
+	if err := form.Run(); err != nil {
+		return fmt.Errorf("selection error: %v", err)
+	}
+
+	if len(selectedPaths) == 0 {
+		log.Info("No directories selected for pruning")
+		return nil
+	}
+
+	// Calculate total size to be pruned
+	var totalSizeToPrune int64
+	for _, path := range selectedPaths {
+		for _, result := range s.results {
+			if result.Path == path {
+				totalSizeToPrune += result.Size
+				break
+			}
+		}
+	}
+
+	// Ask for confirmation before pruning
+	var confirmed bool
+	confirmForm := huh.NewConfirm().
+		Title("Are you sure you want to prune these directories?").
+		Description(fmt.Sprintf("This will permanently delete %d directories (total %s)", 
+			len(selectedPaths), helpers.FormatSize(totalSizeToPrune))).
+		Affirmative("Yes, delete them").
+		Negative("No, cancel").
+		Value(&confirmed)
+
+	if err := confirmForm.Run(); err != nil {
+		return fmt.Errorf("confirmation error: %v", err)
+	}
+
+	if !confirmed {
+		log.Info("Pruning cancelled")
+		return nil
+	}
+
+	// Perform pruning with spinner
+	var pruneErr error
+	action := func() {
+		pruneErr = s.executeNodeModulesPruning(selectedPaths)
+	}
+
+	if err := spinner.New().
+		Title("Pruning node_modules directories...").
+		Action(action).
+		Run(); err != nil {
+		return fmt.Errorf("spinner error: %v", err)
+	}
+
+	if pruneErr != nil {
+		return fmt.Errorf("pruning error: %v", pruneErr)
+	}
+
+	log.Info(fmt.Sprintf("Successfully pruned %d directories, freed %s of disk space", 
+		len(selectedPaths), helpers.FormatSize(totalSizeToPrune)))
+	
+	return nil
+}
+
+// executeNodeModulesPruning performs the actual deletion of directories
+func (s *Scanner) executeNodeModulesPruning(paths []string) error {
+	for _, path := range paths {
+		log.Debug(fmt.Sprintf("Removing directory: %s", path))
+		if err := helpers.RemoveDirectory(path); err != nil {
+			return fmt.Errorf("failed to remove %s: %v", path, err)
+		}
+	}
+	return nil
 }
